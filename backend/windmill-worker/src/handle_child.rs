@@ -378,11 +378,7 @@ pub async fn handle_child(
         // when the kill could not be confirmed. SIGINT and SIGTERM are only sent where the
         // sends below are compiled in: elsewhere an exit during their wait is unsignaled.
         let unix_signal = |s: &'static str| {
-            if cfg!(any(target_os = "linux", target_os = "macos")) {
-                s
-            } else {
-                "none"
-            }
+            if cfg!(any(target_os = "linux", target_os = "macos")) { s } else { "none" }
         };
         let kill = async {
             #[allow(unused_variables)]
@@ -801,6 +797,22 @@ async fn handle_wac_step_marker(
     Ok(())
 }
 
+fn is_isolation_wrapper(comm: &str) -> bool {
+    if matches!(comm, "unshare" | "tini" | "tini-static") {
+        return true;
+    }
+    let Some(name) = std::path::Path::new(crate::UNSHARE_TINI_PATH.as_str())
+        .file_name()
+        .and_then(|n| n.to_str())
+    else {
+        return false;
+    };
+    let end = (0..=name.len().min(15))
+        .rfind(|&i| name.is_char_boundary(i))
+        .unwrap_or(0);
+    comm == &name[..end]
+}
+
 async fn first_child_pid(proc_root: &std::path::Path, pid: u32) -> Option<u32> {
     let children_path = proc_root.join(format!("{pid}/task/{pid}/children"));
     let mut file = File::open(children_path).await.ok()?;
@@ -836,7 +848,7 @@ async fn get_mem_peak_in(proc_root: &std::path::Path, pid: Option<u32>, nsjail: 
         let mut is_wrapper = false;
         while let Some(line) = lines.next_line().await.unwrap_or(None) {
             if let Some(name) = line.strip_prefix("Name:") {
-                if matches!(name.trim(), "unshare" | "tini" | "tini-static") {
+                if is_isolation_wrapper(name.trim()) {
                     is_wrapper = true;
                     break;
                 }
